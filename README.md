@@ -44,13 +44,27 @@ calls by the engine itself. The optional picker is a service you host.
 
 ## Quick start
 
-1. Generate the modules for your target spot (defaults: Apple Park):
+You never need to render anything yourself: GitHub Actions builds the module
+files for you on every push.
 
-   ```sh
-   node tools/cli.mjs build all 35.6764 139.65 12
-   ```
+### Option A — build with GitHub Actions (no computer needed)
 
-2. Take the file for your app from `dist/` and install it:
+1. Push this repo to GitHub. On every push to the default branch the CI
+   workflow runs the test suite, renders `dist/` with your repository's own
+   raw URLs, and commits the result.
+2. Choose the target spot by setting three repository variables
+   (**Settings → Secrets and variables → Actions → Variables**, editable from
+   the GitHub mobile app):
+
+   | Variable | Example |
+   |----------|---------|
+   | `MYROCKET_LAT` | `35.6764` |
+   | `MYROCKET_LNG` | `139.65` |
+   | `MYROCKET_HACC` | `12` |
+
+   Then re-run the **CI** workflow (or push any commit) and the committed
+   `dist/` files now contain your coordinates.
+3. Take the file for your app from `dist/` and install it:
 
    | File | App |
    |------|-----|
@@ -60,7 +74,7 @@ calls by the engine itself. The optional picker is a service you host.
    | `myrocket-location-ios.snippet` | Quantumult X |
    | `myrocket-location-ios.stoverride` | Stash |
 
-3. In the app, enable the module, enable HTTPS decryption (MITM), and make
+4. In the app, enable the module, enable HTTPS decryption (MITM), and make
    sure these hosts are covered:
 
    ```
@@ -71,12 +85,29 @@ calls by the engine itself. The optional picker is a service you host.
    bluedot.is.autonavi.com.gds.alibabadns.com
    ```
 
-4. Reboot the phone once after enabling (this clears locationd's cached
+5. Reboot the phone once after enabling (this clears locationd's cached
    results; toggling location off/on is usually not enough on iOS 26+).
    Open Apple Maps and long-press your target area to verify.
 
-Changing the location later: rerun the `build` command and re-import, or use
-the picker below to change it remotely without reinstalling anything.
+Changing the location later: update the variables in step 2 and let CI
+re-render, use the picker below, or edit the module's arguments directly in
+the proxy app on-device.
+
+Releases: pushing a `v*` tag runs the release workflow, which attaches the
+module files to a GitHub Release (with pinned, immutable `script-path` URLs).
+
+### Option B — build locally
+
+```sh
+node tools/cli.mjs build all 35.6764 139.65 12
+```
+
+then install the matching file from `dist/` as in step 3 above. When building
+locally for import from your own fork, set the repo used in the rendered URLs:
+
+```sh
+MYROCKET_REPO=<user>/<repo> MYROCKET_BRANCH=main node tools/cli.mjs build all
+```
 
 ## Remote target via the picker (optional)
 
@@ -147,7 +178,7 @@ format change degrades to "real location" instead of "no location".
 ```
 core/wloc.mjs            engine: framing, protobuf, patching (ES module)
 core/runtime.js          proxy-app adapter ($request/$response/$done mapping)
-modules/*.template       module templates with {{LATITUDE}} placeholders
+modules/*.template       module templates with {{REPO}}/{{BRANCH}}/{{LATITUDE}} placeholders
 tools/build-dist.mjs     engine+adapter -> dist/wloc.engine.js
 tools/cli.mjs            build / test / demo / dump
 tools/make-fixture.mjs   regenerate test/fixtures/arpc-response.hex

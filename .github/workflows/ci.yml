@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      latitude:
+        description: "Target latitude (overrides the MYROCKET_LAT repo variable)"
+        required: false
+        default: ""
+      longitude:
+        description: "Target longitude (overrides the MYROCKET_LNG repo variable)"
+        required: false
+        default: ""
+      horizontalAccuracy:
+        description: "Horizontal accuracy in meters (overrides MYROCKET_HACC)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    env:
+      MYROCKET_REPO: ${{ github.repository }}
+      MYROCKET_BRANCH: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Engine unit tests
+        run: node tools/cli.mjs test
+
+      - name: Proxy-app sandbox tests
+        run: node test/runtime.test.mjs
+
+      - name: End-to-end demo (ARPC fixture)
+        run: node tools/cli.mjs demo
+
+      - name: Render dist modules
+        run: |
+          node tools/cli.mjs build all \
+            "${{ github.event.inputs.latitude || vars.MYROCKET_LAT || '37.3349' }}" \
+            "${{ github.event.inputs.longitude || vars.MYROCKET_LNG || '-122.00902' }}" \
+            "${{ github.event.inputs.horizontalAccuracy || vars.MYROCKET_HACC || '39' }}"
+
+      - name: Commit rendered dist (pushes to the default branch only)
+        if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dist
+          if git diff --cached --quiet; then
+            echo "dist unchanged — nothing to commit"
+          else
+            git commit -m "ci: render dist modules [skip ci]"
+            git push
+          fi
+
+      - name: Upload module artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: myrocket-location-modules
+          path: |
+            dist/*.sgmodule
+            dist/*.lnplugin
+            dist/*.snippet
+            dist/*.stoverride
+            dist/wloc.engine.js
+          if-no-files-found: error

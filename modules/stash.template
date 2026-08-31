@@ -1,6 +1,6 @@
 name: MyRocket Location Spoofer
 desc: Rewrites the coordinates inside Apple location responses so iOS reports your chosen spot. Works with Stash.
-homepage: https://github.com/you/myrocket-location-ios
+homepage: https://github.com/{{REPO}}
 
 http:
   script:
@@ -21,5 +21,5 @@ http:
 
 script-providers:
   myrocket-location:
-    url: https://raw.githubusercontent.com/you/myrocket-location-ios/main/dist/wloc.engine.js
+    url: https://raw.githubusercontent.com/{{REPO}}/{{BRANCH}}/dist/wloc.engine.js
     interval: 86400

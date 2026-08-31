@@ -30,7 +30,13 @@ const APPS = ["shadowrocket", "surge", "loon", "quantumultx", "stash"];
 
 async function renderTemplate(app, config) {
   const template = await readFile(join(MODULES, app + ".template"), "utf8");
+  // CI sets MYROCKET_REPO/MYROCKET_BRANCH so rendered module files point at
+  // this repository's raw URLs; defaults keep the historical placeholder.
+  const repo = process.env.MYROCKET_REPO || "you/myrocket-location-ios";
+  const branch = process.env.MYROCKET_BRANCH || "main";
   const out = template
+    .replace(/\{\{REPO\}\}/g, repo)
+    .replace(/\{\{BRANCH\}\}/g, branch)
     .replace(/\{\{LATITUDE\}\}/g, String(config.latitude))
     .replace(/\{\{LONGITUDE\}\}/g, String(config.longitude))
     .replace(/\{\{HACC\}\}/g, String(config.horizontalAccuracy));

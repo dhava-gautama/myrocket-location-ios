@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      MYROCKET_REPO: ${{ github.repository }}
+      # Tag builds pin script-path URLs to the tag, which is immutable on
+      # raw.githubusercontent.com.
+      MYROCKET_BRANCH: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Test + render modules
+        run: |
+          node tools/cli.mjs test
+          node test/runtime.test.mjs
+          node tools/cli.mjs build all \
+            "${{ vars.MYROCKET_LAT || '37.3349' }}" \
+            "${{ vars.MYROCKET_LNG || '-122.00902' }}" \
+            "${{ vars.MYROCKET_HACC || '39' }}"
+
+      - name: Attach module files to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/myrocket-location-ios.sgmodule
+            dist/myrocket-location-ios-surge.sgmodule
+            dist/myrocket-location-ios.lnplugin
+            dist/myrocket-location-ios.snippet
+            dist/myrocket-location-ios.stoverride
+            dist/wloc.engine.js
+          generate_release_notes: true
