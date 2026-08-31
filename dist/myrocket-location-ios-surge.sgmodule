@@ -1,0 +1,11 @@
+#!name=MyRocket Location Spoofer
+#!desc=Rewrites the coordinates inside Apple location responses so iOS reports your chosen spot. Works with Surge.
+#!homepage=https://github.com/you/myrocket-location-ios
+#!date=2026-08-31
+#!arguments=latitude:37.3349,longitude:-122.00902,horizontalAccuracy:39,debug:false
+
+[Script]
+MyRocket Location = type=http-response,pattern=^https?:\/\/(?:gs-loc(?:-cn)?\.apple\.com|gsp-ssl\.ls\.apple\.com|bluedot\.is\.autonavi\.com(?:\.gds\.alibabadns\.com)?)\/clls\/wloc,requires-body=1,binary-body-mode=1,max-size=0,timeout=30,script-path=https://raw.githubusercontent.com/you/myrocket-location-ios/main/dist/wloc.engine.js,argument=mode=response&latitude={{{latitude}}}&longitude={{{longitude}}}&horizontalAccuracy={{{horizontalAccuracy}}}&failOpen=true&debug={{{debug}}}
+
+[MITM]
+hostname = %APPEND% gs-loc.apple.com, gs-loc-cn.apple.com, gsp-ssl.ls.apple.com, bluedot.is.autonavi.com, bluedot.is.autonavi.com.gds.alibabadns.com

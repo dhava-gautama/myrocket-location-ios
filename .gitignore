@@ -1,0 +1,4 @@
+node_modules/
+location-picker/loc.json
+location-picker/.env
+*.log

@@ -1,0 +1,25 @@
+name: MyRocket Location Spoofer
+desc: Rewrites the coordinates inside Apple location responses so iOS reports your chosen spot. Works with Stash.
+homepage: https://github.com/you/myrocket-location-ios
+
+http:
+  script:
+    - match: ^https?:\/\/(?:gs-loc(?:-cn)?\.apple\.com|gsp-ssl\.ls\.apple\.com|bluedot\.is\.autonavi\.com(?:\.gds\.alibabadns\.com)?)\/clls\/wloc
+      name: myrocket-location
+      type: response
+      require-body: true
+      binary-mode: true
+      max-size: 0
+      timeout: 30
+      argument: mode=response&latitude={{LATITUDE}}&longitude={{LONGITUDE}}&horizontalAccuracy={{HACC}}&failOpen=true&debug=false
+  mitm:
+    - gs-loc.apple.com
+    - gs-loc-cn.apple.com
+    - gsp-ssl.ls.apple.com
+    - bluedot.is.autonavi.com
+    - bluedot.is.autonavi.com.gds.alibabadns.com
+
+script-providers:
+  myrocket-location:
+    url: https://raw.githubusercontent.com/you/myrocket-location-ios/main/dist/wloc.engine.js
+    interval: 86400
