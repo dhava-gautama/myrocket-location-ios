@@ -1,10 +1,10 @@
 #!name=MyRocket Location Spoofer
 #!desc=Rewrites the coordinates inside Apple location responses so iOS reports your chosen spot. Works with Quantumult X.
-#!homepage=https://github.com/you/myrocket-location-ios
+#!homepage=https://github.com/dhava-gautama/myrocket-location-ios
 #!date=2026-08-31
 
 [rewrite_local]
-^https?:\/\/(?:gs-loc(?:-cn)?\.apple\.com|gsp-ssl\.ls\.apple\.com|bluedot\.is\.autonavi\.com(?:\.gds\.alibabadns\.com)?)\/clls\/wloc url script-response-body https://raw.githubusercontent.com/you/myrocket-location-ios/main/dist/wloc.engine.js
+^https?:\/\/(?:gs-loc(?:-cn)?\.apple\.com|gsp-ssl\.ls\.apple\.com|bluedot\.is\.autonavi\.com(?:\.gds\.alibabadns\.com)?)\/clls\/wloc url script-response-body https://raw.githubusercontent.com/dhava-gautama/myrocket-location-ios/master/dist/wloc.engine.js
 
 [mitm]
 hostname = gs-loc.apple.com, gs-loc-cn.apple.com, gsp-ssl.ls.apple.com, bluedot.is.autonavi.com, bluedot.is.autonavi.com.gds.alibabadns.com

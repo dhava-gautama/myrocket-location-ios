@@ -1,6 +1,6 @@
 #!name=MyRocket Location Spoofer
 #!desc=Rewrites the coordinates inside Apple location responses so iOS reports your chosen spot. Works with Loon.
-#!homepage=https://github.com/you/myrocket-location-ios
+#!homepage=https://github.com/dhava-gautama/myrocket-location-ios
 #!date=2026-08-31
 
 [Argument]
@@ -12,8 +12,8 @@ configUrl = input,"",tag=Remote config URL,desc=Full loc.json URL; overrides man
 debug = switch,true,tag=Debug logs,desc=Search 'MyRocket' in the Loon log viewer
 
 [Script]
-http-request ^https?:\/\/(?:gs-loc(?:-cn)?\.apple\.com|gsp-ssl\.ls\.apple\.com|bluedot\.is\.autonavi\.com(?:\.gds\.alibabadns\.com)?)\/clls\/wloc script-path=https://raw.githubusercontent.com/you/myrocket-location-ios/main/dist/wloc.engine.js, requires-body=false, timeout=3, tag=MyRocket Prepare, argument=[{debug}]
-http-response ^https?:\/\/(?:gs-loc(?:-cn)?\.apple\.com|gsp-ssl\.ls\.apple\.com|bluedot\.is\.autonavi\.com(?:\.gds\.alibabadns\.com)?)\/clls\/wloc script-path=https://raw.githubusercontent.com/you/myrocket-location-ios/main/dist/wloc.engine.js, requires-body=true, binary-body-mode=true, timeout=30, tag=MyRocket Location, argument=[{enabled},{latitude},{longitude},{horizontalAccuracy},{configUrl},{debug}]
+http-request ^https?:\/\/(?:gs-loc(?:-cn)?\.apple\.com|gsp-ssl\.ls\.apple\.com|bluedot\.is\.autonavi\.com(?:\.gds\.alibabadns\.com)?)\/clls\/wloc script-path=https://raw.githubusercontent.com/dhava-gautama/myrocket-location-ios/master/dist/wloc.engine.js, requires-body=false, timeout=3, tag=MyRocket Prepare, argument=[{debug}]
+http-response ^https?:\/\/(?:gs-loc(?:-cn)?\.apple\.com|gsp-ssl\.ls\.apple\.com|bluedot\.is\.autonavi\.com(?:\.gds\.alibabadns\.com)?)\/clls\/wloc script-path=https://raw.githubusercontent.com/dhava-gautama/myrocket-location-ios/master/dist/wloc.engine.js, requires-body=true, binary-body-mode=true, timeout=30, tag=MyRocket Location, argument=[{enabled},{latitude},{longitude},{horizontalAccuracy},{configUrl},{debug}]
 
 [mitm]
 hostname = gs-loc.apple.com, gs-loc-cn.apple.com, gsp-ssl.ls.apple.com, bluedot.is.autonavi.com, bluedot.is.autonavi.com.gds.alibabadns.com
