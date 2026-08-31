@@ -112,9 +112,10 @@ MYROCKET_REPO=<user>/<repo> MYROCKET_BRANCH=main node tools/cli.mjs build all
 ## Remote target via the picker (optional)
 
 The modules accept a `configUrl` argument pointing at a `loc.json` endpoint.
-The response script reads it through the app's persistent store (refreshed by
-a cron script on Loon, or on module reload elsewhere) and prefers its values
-over the hardcoded ones.
+The response script refreshes it inline before each patch (all five apps) and
+prefers its values over the hardcoded ones; if the fetch fails, the last
+cached value is used, and only then the hardcoded coordinates. A cron script
+on Loon optionally keeps the cache warm.
 
 Self-host:
 

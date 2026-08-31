@@ -917,8 +917,18 @@ function handlePrepare(request) {
 
 /**
  * Read + merge config: $argument string, optional cached remote config
- * (written by the cron entry), then engine-side normalization.
+ * (written by the cron entry or an earlier response pass), then
+ * engine-side normalization.
+ *
+ * Returns cache metadata so callers can decide whether a remote refresh is
+ * needed and fall back to stale data when the fetch fails.
  */
+function applyRemoteData(args, data) {
+  if (data && data.latitude !== undefined) args.latitude = data.latitude;
+  if (data && data.longitude !== undefined) args.longitude = data.longitude;
+  if (data && data.horizontalAccuracy !== undefined) args.horizontalAccuracy = data.horizontalAccuracy;
+}
+
 function collectConfig(argument) {
   var args = {};
   if (typeof argument === "string" && argument) {
@@ -929,25 +939,34 @@ function collectConfig(argument) {
     }
   }
 
-  var configUrl = resolveConfigUrl(args);
-  if (configUrl && typeof $persistentStore !== "undefined" && $persistentStore.read) {
+  var cacheUrl = resolveConfigUrl(args);
+  var cacheEntry = null;
+  var cacheFresh = false;
+  if (cacheUrl && typeof $persistentStore !== "undefined" && $persistentStore.read) {
     try {
       var raw = $persistentStore.read("myrocket_remote_cfg");
       if (raw) {
         var entry = JSON.parse(raw);
-        if (entry && entry.url === configUrl && entry.data && Date.now() - entry.ts < 300000) {
-          if (entry.data.latitude !== undefined) args.latitude = entry.data.latitude;
-          if (entry.data.longitude !== undefined) args.longitude = entry.data.longitude;
-          if (entry.data.horizontalAccuracy !== undefined) args.horizontalAccuracy = entry.data.horizontalAccuracy;
+        if (entry && entry.url === cacheUrl && entry.data) {
+          cacheEntry = entry;
+          cacheFresh = typeof entry.ts === "number" && Date.now() - entry.ts < 300000;
         }
       }
     } catch (err) {
       // ignore malformed cache
     }
   }
+  // Stale entries are still applied: a dead picker must degrade to the last
+  // known target (or the hardcoded one), never to "no location".
+  if (cacheEntry) {
+    applyRemoteData(args, cacheEntry.data);
+  }
 
   return {
     args: args,
+    cacheUrl: cacheUrl,
+    cacheEntry: cacheEntry,
+    cacheFresh: cacheFresh,
     config: {
       enabled: args.enabled,
       failOpen: args.failOpen,
@@ -962,7 +981,74 @@ function collectConfig(argument) {
 /**
  * Rewrite the location records in a /clls/wloc response.
  * Fail-open: any engine or framing error passes the original body through.
+ *
+ * When a remote config (picker) URL is configured, refresh it inline with a
+ * stale-cache fallback instead of relying on a cron-only refresh.
  */
+function fetchRemoteConfig(url, onSuccess, onFailure) {
+  if (typeof $httpClient === "undefined" || !$httpClient.get) {
+    onFailure("no http client");
+    return;
+  }
+  $httpClient.get({ url: url, timeout: 8000 }, function (error, response, body) {
+    if (error || !body) {
+      onFailure(error || "empty body");
+      return;
+    }
+    try {
+      var data = JSON.parse(body);
+      if (!data) {
+        onFailure("invalid json");
+        return;
+      }
+      onSuccess(data);
+    } catch (err) {
+      onFailure("invalid json");
+    }
+  });
+}
+
+function cacheRemoteConfig(url, data) {
+  if (typeof $persistentStore === "undefined" || !$persistentStore.write) return;
+  try {
+    $persistentStore.write(
+      "myrocket_remote_cfg",
+      JSON.stringify({ url: url, data: data, ts: Date.now() }),
+    );
+  } catch (err) {
+    // storage failures must never break spoofing
+  }
+}
+
+function patchAndDone(args, response) {
+  var config = {
+    enabled: args.enabled,
+    failOpen: args.failOpen,
+    debug: parseBoolean(args.debug, false),
+    latitude: args.latitude,
+    longitude: args.longitude,
+    horizontalAccuracy: args.horizontalAccuracy,
+  };
+  var bytes = responseToBytes(response);
+  if (!bytes || bytes.length < 2) {
+    if (config.debug) log("no binary body; passing through");
+    $done({});
+    return;
+  }
+  var started = Date.now();
+  try {
+    var result = spoofWlocResponse(bytes, config);
+    log(
+      "patched " + result.wifiCount + " wifi / " + result.cellCount + " cell via " + result.kind +
+        " in " + (Date.now() - started) + "ms",
+    );
+    $done({ body: packResponseBody(result.response, response) });
+  } catch (err) {
+    if (config.debug) log("patch failed (" + err.message + "); failing open");
+    $done({});
+  }
+}
+
 function handleResponse(request, response) {
   var collected = collectConfig(request && request.argument !== undefined ? request.argument : $argument);
   var args = collected.args;
@@ -981,57 +1067,61 @@ function handleResponse(request, response) {
     return;
   }
 
-  var started = Date.now();
-  try {
-    var result = spoofWlocResponse(bytes, config);
-    log(
-      "patched " + result.wifiCount + " wifi / " + result.cellCount + " cell via " + result.kind +
-        " in " + (Date.now() - started) + "ms",
+  // Refresh the remote config inline (all five apps), then patch. On fetch
+  // failure, collectConfig already applied the stale cache or hardcoded
+  // coordinates, so spoofing degrades gracefully instead of dying.
+  if (collected.cacheUrl && !collected.cacheFresh) {
+    if (config.debug) log("fetching remote config " + collected.cacheUrl);
+    fetchRemoteConfig(
+      collected.cacheUrl,
+      function (data) {
+        var next = {};
+        for (var key in args) {
+          if (Object.prototype.hasOwnProperty.call(args, key)) next[key] = args[key];
+        }
+        applyRemoteData(next, data);
+        cacheRemoteConfig(collected.cacheUrl, data);
+        patchAndDone(next, response);
+      },
+      function (reason) {
+        if (config.debug) log("remote config fetch failed (" + reason + "); using cached/hardcoded target");
+        patchAndDone(args, response);
+      },
     );
-    $done({ body: packResponseBody(result.response, response) });
-  } catch (err) {
-    if (config.debug) log("patch failed (" + err.message + "); failing open");
-    $done({});
+    return;
   }
+
+  patchAndDone(args, response);
 }
 
 /**
- * Cron entry: refresh the cached remote config used by handleResponse.
+ * Cron entry (Loon): opportunistically refresh the cached remote config so
+ * response passes usually hit a warm cache. Response passes also refresh
+ * inline, so this is an optimization, not a requirement.
  */
 function handleCron(argument) {
   var args = parseArgumentString(typeof argument === "string" ? argument : "");
   var configUrl = resolveConfigUrl(args);
   var debug = parseBoolean(args.debug, false);
 
-  function finish() {
+  if (!configUrl) {
+    if (debug) log("cron: no configUrl; nothing to do");
     $done({});
-  }
-
-  if (!configUrl || typeof $httpClient === "undefined" || !$httpClient.get) {
-    if (debug) log("cron: no configUrl or http client; nothing to do");
-    finish();
     return;
   }
 
-  $httpClient.get({ url: configUrl, timeout: 8000 }, function (error, response, body) {
-    if (!error && body) {
-      try {
-        var data = JSON.parse(body);
-        if (data && typeof $persistentStore !== "undefined" && $persistentStore.write) {
-          $persistentStore.write(
-            "myrocket_remote_cfg",
-            JSON.stringify({ url: configUrl, data: data, ts: Date.now() }),
-          );
-          log("cron: cached remote config " + data.latitude + "," + data.longitude);
-        }
-      } catch (parseErr) {
-        if (debug) log("cron: configUrl returned invalid JSON");
-      }
-    } else if (debug) {
-      log("cron: fetch failed " + (error || "empty body"));
-    }
-    finish();
-  });
+  fetchRemoteConfig(
+    configUrl,
+    function (data) {
+      cacheRemoteConfig(configUrl, data);
+      log("cron: cached remote config " + data.latitude + "," + data.longitude);
+      $done({});
+    },
+    function (reason) {
+      if (debug) log("cron: fetch failed (" + reason + ")");
+      $done({});
+    },
+  );
 }
 
 /* ------------------------------------------------------------------ *
