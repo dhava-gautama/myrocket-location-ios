@@ -41,6 +41,9 @@ jobs:
       - name: Proxy-app sandbox tests
         run: node test/runtime.test.mjs
 
+      - name: Picker server tests
+        run: node test/picker.test.mjs
+
       - name: End-to-end demo (ARPC fixture)
         run: node tools/cli.mjs demo
 

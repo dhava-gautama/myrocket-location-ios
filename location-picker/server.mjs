@@ -4,8 +4,8 @@
  *
  * Serves /loc.json?token=... with the current spoof target so proxy-app
  * scripts can pick up coordinate changes without reinstalling modules.
- * The same page doubles as a web UI for picking coordinates on a map,
- * updating the stored location, and (optionally) geocoding an address.
+ * The same page doubles as a web UI for editing the stored location and
+ * shows when a module last fetched the config.
  *
  * Environment:
  *   TOKEN  required, access token; the process exits without it
@@ -18,19 +18,7 @@ import { createServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const HERE = dirname(fileURLToPath(import.meta.url));
-const DATA_FILE = join(HERE, "loc.json");
-
-const TOKEN = process.env.TOKEN;
-if (!TOKEN) {
-  console.error("MyRocket picker: TOKEN environment variable is required (openssl rand -hex 24)");
-  process.exit(1);
-}
-const PORT = Number(process.env.PORT || 8080);
-const CERT = process.env.CERT || "";
-const KEY = process.env.KEY || "";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const PAGE_HTML = `<!doctype html>
 <html lang="en">
@@ -49,6 +37,8 @@ const PAGE_HTML = `<!doctype html>
   button { margin-top: 1rem; background: #2f6fed; border: 0; color: white; border-radius: 8px; padding: 0.6rem 1.2rem; font-size: 0.95rem; cursor: pointer; }
   button:disabled { opacity: 0.5; cursor: default; }
   .status { font-size: 0.85rem; color: #8b93a5; margin-top: 0.75rem; min-height: 1.2em; }
+  .badge { font-size: 0.85rem; color: #8b93a5; margin-top: 0.5rem; }
+  .badge .live { color: #34c759; }
   .row { display: flex; gap: 0.75rem; } .row > div { flex: 1; }
   code { background: #0b0e14; padding: 0.2rem 0.4rem; border-radius: 6px; font-size: 0.85rem; }
 </style>
@@ -65,6 +55,7 @@ const PAGE_HTML = `<!doctype html>
     <input id="hacc" inputmode="numeric">
     <button id="save">Save target</button>
     <div class="status" id="status"></div>
+    <div class="badge" id="badge"></div>
   </div>
   <div class="card">
     <p style="margin-top:0;font-size:0.85rem;color:#8b93a5">Point your module's <code>configUrl</code> at:</p>
@@ -74,13 +65,33 @@ const PAGE_HTML = `<!doctype html>
 <script>
 const qs = new URLSearchParams(location.search);
 const TOKEN = qs.get('token') || '';
-document.getElementById('configUrl').textContent = location.origin + '/loc.json?token=' + TOKEN;
+document.getElementById('configUrl').textContent = location.origin + '/loc.json?token=' + encodeURIComponent(TOKEN);
+function ago(ts) {
+  if (!ts) return 'never';
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.round(s / 60) + 'm ago';
+  return Math.round(s / 3600) + 'h ago';
+}
 async function load() {
-  const res = await fetch('/loc.json?token=' + encodeURIComponent(TOKEN));
+  const res = await fetch('/loc.json?token=' + encodeURIComponent(TOKEN) + '&source=ui');
   const data = await res.json();
   document.getElementById('lat').value = data.latitude;
   document.getElementById('lng').value = data.longitude;
   document.getElementById('hacc').value = data.horizontalAccuracy;
+}
+async function refreshBadge() {
+  const el = document.getElementById('badge');
+  try {
+    const res = await fetch('/stats?token=' + encodeURIComponent(TOKEN));
+    if (!res.ok) { el.textContent = ''; return; }
+    const s = await res.json();
+    el.innerHTML = s.lastFetchAt
+      ? '<span class="live">●</span> module last fetched ' + ago(s.lastFetchAt) + ' · ' + s.fetchCount + ' since restart'
+      : 'no module has fetched the config yet';
+  } catch (err) {
+    el.textContent = '';
+  }
 }
 document.getElementById('save').addEventListener('click', async () => {
   const status = document.getElementById('status');
@@ -98,6 +109,7 @@ document.getElementById('save').addEventListener('click', async () => {
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     status.textContent = 'Saved. Modules refresh it inline — the next location request uses it.';
+    refreshBadge();
   } catch (err) {
     status.textContent = 'Save failed: ' + err.message;
   } finally {
@@ -105,86 +117,139 @@ document.getElementById('save').addEventListener('click', async () => {
   }
 });
 load().catch(() => {});
+refreshBadge();
+setInterval(refreshBadge, 5000);
 </script>
 </body>
 </html>
 `;
 
-function readLocation() {
-  if (existsSync(DATA_FILE)) {
-    try {
-      return JSON.parse(readFileSync(DATA_FILE, "utf8"));
-    } catch {
-      // fall through to default
-    }
-  }
-  return { latitude: 37.3349, longitude: -122.00902, horizontalAccuracy: 39 };
-}
+/**
+ * Build the request handler plus fetch stats. Exported for tests; the CLI
+ * entry below wires it to a real server with env credentials.
+ */
+export function createHandler(options) {
+  const token = String(options.token || "");
+  const dataFile = options.dataFile;
 
-function validLocation(body) {
-  const latitude = Number(body.latitude);
-  const longitude = Number(body.longitude);
-  const horizontalAccuracy = Math.trunc(Number(body.horizontalAccuracy || 39));
-  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) return null;
-  if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) return null;
-  if (!Number.isFinite(horizontalAccuracy) || horizontalAccuracy < 0) return null;
-  return { latitude, longitude, horizontalAccuracy, updatedAt: new Date().toISOString() };
-}
+  const stats = { fetchCount: 0, lastFetchAt: null };
 
-function sendJson(res, status, payload) {
-  const body = JSON.stringify(payload);
-  res.writeHead(status, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) });
-  res.end(body);
-}
-
-const handler = (req, res) => {
-  const url = new URL(req.url, "http://localhost");
-  const token = url.searchParams.get("token") || "";
-
-  if (url.pathname === "/health") {
-    sendJson(res, 200, { ok: true });
-    return;
-  }
-  if (token !== TOKEN) {
-    sendJson(res, 403, { error: "invalid token" });
-    return;
-  }
-  if (url.pathname === "/loc.json" || url.pathname === "/") {
-    sendJson(res, 200, readLocation());
-    return;
-  }
-  if (url.pathname === "/set" && req.method === "POST") {
-    let raw = "";
-    req.on("data", (chunk) => {
-      raw += chunk;
-      if (raw.length > 10000) req.destroy();
-    });
-    req.on("end", () => {
+  function readLocation() {
+    if (dataFile && existsSync(dataFile)) {
       try {
-        const parsed = validLocation(JSON.parse(raw || "{}"));
-        if (!parsed) {
-          sendJson(res, 400, { error: "invalid coordinates" });
-          return;
-        }
-        writeFileSync(DATA_FILE, JSON.stringify(parsed, null, 2) + "\n");
-        sendJson(res, 200, parsed);
+        return JSON.parse(readFileSync(dataFile, "utf8"));
       } catch {
-        sendJson(res, 400, { error: "invalid JSON body" });
+        // fall through to default
       }
-    });
-    return;
+    }
+    return { latitude: 37.3349, longitude: -122.00902, horizontalAccuracy: 39 };
   }
-  res.writeHead(404, { "Content-Type": "text/plain" });
-  res.end("not found");
-};
 
-const server =
-  CERT && KEY
-    ? createHttpsServer({ cert: readFileSync(CERT), key: readFileSync(KEY) }, handler)
-    : createServer(handler);
+  function validLocation(body) {
+    const latitude = Number(body.latitude);
+    const longitude = Number(body.longitude);
+    const horizontalAccuracy = Math.trunc(Number(body.horizontalAccuracy || 39));
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) return null;
+    if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) return null;
+    if (!Number.isFinite(horizontalAccuracy) || horizontalAccuracy < 0) return null;
+    return { latitude, longitude, horizontalAccuracy, updatedAt: new Date().toISOString() };
+  }
 
-server.listen(PORT, () => {
-  const scheme = CERT && KEY ? "https" : "http";
-  console.log(`MyRocket picker listening on ${scheme}://0.0.0.0:${PORT}`);
-  console.log(`config URL: ${scheme}://<host>:${PORT}/loc.json?token=<TOKEN>`);
-});
+  function sendJson(res, status, payload) {
+    const body = JSON.stringify(payload);
+    res.writeHead(status, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) });
+    res.end(body);
+  }
+
+  const handler = (req, res) => {
+    const url = new URL(req.url, "http://localhost");
+    const givenToken = url.searchParams.get("token") || "";
+
+    if (url.pathname === "/health") {
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    if (givenToken !== token) {
+      sendJson(res, 403, { error: "invalid token" });
+      return;
+    }
+    if (url.pathname === "/loc.json") {
+      // source=ui marks the picker page's own load(); only real module
+      // fetches count toward the badge.
+      if (url.searchParams.get("source") !== "ui") {
+        stats.fetchCount += 1;
+        stats.lastFetchAt = Date.now();
+      }
+      sendJson(res, 200, readLocation());
+      return;
+    }
+    if (url.pathname === "/stats") {
+      sendJson(res, 200, {
+        fetchCount: stats.fetchCount,
+        lastFetchAt: stats.lastFetchAt,
+        updatedAt: readLocation().updatedAt || null,
+      });
+      return;
+    }
+    if (url.pathname === "/set" && req.method === "POST") {
+      let raw = "";
+      req.on("data", (chunk) => {
+        raw += chunk;
+        if (raw.length > 10000) req.destroy();
+      });
+      req.on("end", () => {
+        try {
+          const parsed = validLocation(JSON.parse(raw || "{}"));
+          if (!parsed) {
+            sendJson(res, 400, { error: "invalid coordinates" });
+            return;
+          }
+          writeFileSync(dataFile, JSON.stringify(parsed, null, 2) + "\n");
+          sendJson(res, 200, parsed);
+        } catch {
+          sendJson(res, 400, { error: "invalid JSON body" });
+        }
+      });
+      return;
+    }
+    if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(PAGE_HTML);
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.end("not found");
+  };
+
+  handler.stats = stats;
+  return handler;
+}
+
+/* Main entry: only when executed directly (node location-picker/server.mjs). */
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isMain) {
+  const TOKEN = process.env.TOKEN;
+  if (!TOKEN) {
+    console.error("MyRocket picker: TOKEN environment variable is required (openssl rand -hex 24)");
+    process.exit(1);
+  }
+  const PORT = Number(process.env.PORT || 8080);
+  const CERT = process.env.CERT || "";
+  const KEY = process.env.KEY || "";
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const DATA_FILE = join(HERE, "loc.json");
+
+  const handler = createHandler({ token: TOKEN, dataFile: DATA_FILE });
+
+  const server =
+    CERT && KEY
+      ? createHttpsServer({ cert: readFileSync(CERT), key: readFileSync(KEY) }, handler)
+      : createServer(handler);
+
+  server.listen(PORT, () => {
+    const scheme = CERT && KEY ? "https" : "http";
+    console.log(`MyRocket picker listening on ${scheme}://0.0.0.0:${PORT}`);
+    console.log(`config URL: ${scheme}://<host>:${PORT}/loc.json?token=***`);
+  });
+}
