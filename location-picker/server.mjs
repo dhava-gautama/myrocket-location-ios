@@ -97,7 +97,7 @@ document.getElementById('save').addEventListener('click', async () => {
       }),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    status.textContent = 'Saved. Cached module configs pick it up within 5 minutes.';
+    status.textContent = 'Saved. Modules refresh it inline — the next location request uses it.';
   } catch (err) {
     status.textContent = 'Save failed: ' + err.message;
   } finally {

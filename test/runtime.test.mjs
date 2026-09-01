@@ -48,6 +48,8 @@ function base64(bytes) {
 
 const ARG = "mode=response&latitude=35.6764&longitude=139.65&horizontalAccuracy=12&failOpen=true&debug=false";
 
+const PICKER_URL = decodeURIComponent("https%3A%2F%2Fpicker.example%2Floc.json%3Ftoken%3Dabc");
+
 /* 1. Shadowrocket-style: binary body as Uint8Array. */
 {
   const bodyBytes = hexToBytes(fixtureHex);
@@ -128,7 +130,7 @@ const ARG = "mode=response&latitude=35.6764&longitude=139.65&horizontalAccuracy=
       },
     },
   });
-  check("cron called with configUrl", fetched === "https://picker.example/loc.json?token=abc", String(fetched));
+  check("cron called with configUrl", fetched === PICKER_URL, String(fetched));
   check("cron result is empty", result && Object.keys(result).length === 0);
   check("cron cached the config", Boolean(store.myrocket_remote_cfg), JSON.stringify(Object.keys(store)));
 }
@@ -137,7 +139,7 @@ const ARG = "mode=response&latitude=35.6764&longitude=139.65&horizontalAccuracy=
 {
   const store = {
     myrocket_remote_cfg: JSON.stringify({
-      url: "https://picker.example/loc.json?token=abc",
+      url: PICKER_URL,
       data: { latitude: 48.8566, longitude: 2.3522, horizontalAccuracy: 8 },
       ts: Date.now(),
     }),
@@ -172,6 +174,72 @@ const ARG = "mode=response&latitude=35.6764&longitude=139.65&horizontalAccuracy=
   const text = Buffer.from(decoded).toString("hex");
   // BigInt-verified varints: 1.5 -> 80a3c347, 2.5 -> 80e59a77.
   check("qx base64 contains paris lat", text.includes("80a3c347") && text.includes("80e59a77"), text.slice(0, 80));
+}
+
+/* 9. Stale cache + inline fetch: response pass refreshes config and uses it. */
+{
+  const store = {
+    myrocket_remote_cfg: JSON.stringify({
+      url: PICKER_URL,
+      data: { latitude: 48.8566, longitude: 2.3522, horizontalAccuracy: 8 },
+      ts: Date.now() - 10 * 60 * 1000, // 10 minutes old -> stale -> triggers fetch
+    }),
+  };
+  let fetched = null;
+  let wrote = false;
+  const result = runInSandbox({
+    __ENGINE_SOURCE__: engineSource,
+    $response: { bodyBytes: hexToBytes(fixtureHex) },
+    $argument: "configUrl=https%3A%2F%2Fpicker.example%2Floc.json%3Ftoken%3Dabc",
+    $httpClient: {
+      get: (options, callback) => {
+        fetched = options.url;
+        callback(null, {}, JSON.stringify({ latitude: -33.8688, longitude: 151.2093, horizontalAccuracy: 5 }));
+      },
+    },
+    $persistentStore: {
+      read: (key) => store[key] || null,
+      write: (key, value) => {
+        store[key] = value;
+        wrote = true;
+      },
+    },
+    console,
+  });
+  const text = Buffer.from(result.body).toString("hex");
+  // Engine-verified varints (computed via spoofWlocResponse): -33.8688 -> 80a081b1f3, 151.2093 -> d0a99caa38.
+  check("inline fetch used for response", fetched === PICKER_URL, String(fetched));
+  check("inline fetch overrides coords", text.includes("80a081b1f3") && text.includes("d0a99caa38"), text.slice(0, 80));
+  check("inline fetch re-caches config", wrote);
+}
+
+/* 10. Stale cache + failing fetch: falls back to the stale cached target. */
+{
+  const store = {
+    myrocket_remote_cfg: JSON.stringify({
+      url: PICKER_URL,
+      data: { latitude: 48.8566, longitude: 2.3522, horizontalAccuracy: 8 },
+      ts: Date.now() - 10 * 60 * 1000,
+    }),
+  };
+  const result = runInSandbox({
+    __ENGINE_SOURCE__: engineSource,
+    $response: { bodyBytes: hexToBytes(fixtureHex) },
+    $argument: "configUrl=https%3A%2F%2Fpicker.example%2Floc.json%3Ftoken%3Dabc",
+    $httpClient: {
+      get: (options, callback) => callback("network error", null, null),
+    },
+    $persistentStore: {
+      read: (key) => store[key] || null,
+      write: (key, value) => {
+        store[key] = value;
+      },
+    },
+    console,
+  });
+  const text = Buffer.from(result.body).toString("hex");
+  // Stale Paris values from the cache must still be applied.
+  check("failed fetch falls back to stale cache", text.includes("e082d59912") && text.includes("a0d89470"), text.slice(0, 80));
 }
 
 console.log("\n" + passed + " passed, " + failed + " failed");
