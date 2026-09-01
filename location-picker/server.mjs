@@ -40,12 +40,21 @@ const PAGE_HTML = `<!doctype html>
   .badge { font-size: 0.85rem; color: #8b93a5; margin-top: 0.5rem; }
   .badge .live { color: #34c759; }
   .row { display: flex; gap: 0.75rem; } .row > div { flex: 1; }
+  .result { padding: 0.5rem 0.6rem; border: 1px solid #2a3240; border-radius: 8px; margin-top: 0.5rem; font-size: 0.85rem; cursor: pointer; }
+  .result:hover { border-color: #2f6fed; }
   code { background: #0b0e14; padding: 0.2rem 0.4rem; border-radius: 6px; font-size: 0.85rem; }
 </style>
 </head>
 <body>
 <main>
   <h1>MyRocket Location Picker</h1>
+  <div class="card">
+    <label>Search an address</label>
+    <input id="query" placeholder="e.g. Tokyo Tower">
+    <button id="search">Search</button>
+    <div class="status" id="searchStatus"></div>
+    <div id="results"></div>
+  </div>
   <div class="card">
     <div class="row">
       <div><label>Latitude</label><input id="lat" inputmode="decimal"></div>
@@ -73,6 +82,41 @@ function ago(ts) {
   if (s < 3600) return Math.round(s / 60) + 'm ago';
   return Math.round(s / 3600) + 'h ago';
 }
+function renderResults(list) {
+  const box = document.getElementById('results');
+  box.textContent = '';
+  list.forEach(function (item) {
+    const div = document.createElement('div');
+    div.className = 'result';
+    div.textContent = item.label + ' (' + item.latitude + ', ' + item.longitude + ')';
+    div.addEventListener('click', function () {
+      document.getElementById('lat').value = item.latitude;
+      document.getElementById('lng').value = item.longitude;
+      document.getElementById('status').textContent = 'Coordinates filled in — press Save target.';
+    });
+    box.appendChild(div);
+  });
+}
+document.getElementById('search').addEventListener('click', async () => {
+  const button = document.getElementById('search');
+  const status = document.getElementById('searchStatus');
+  const q = document.getElementById('query').value.trim();
+  if (!q) { status.textContent = 'Type an address first.'; return; }
+  button.disabled = true;
+  status.textContent = 'Searching…';
+  try {
+    const res = await fetch('/search?token=' + TOKEN + '&q=' + encodeURIComponent(q));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const list = await res.json();
+    if (!Array.isArray(list) || list.length === 0) { status.textContent = 'No matches.'; return; }
+    status.textContent = 'Tap a result to fill the form:';
+    renderResults(list);
+  } catch (err) {
+    status.textContent = 'Search failed: ' + err.message;
+  } finally {
+    button.disabled = false;
+  }
+});
 async function load() {
   const res = await fetch('/loc.json?token=' + encodeURIComponent(TOKEN) + '&source=ui');
   const data = await res.json();
@@ -125,12 +169,30 @@ setInterval(refreshBadge, 5000);
 `;
 
 /**
+ * Flatten a Nominatim search response into [{label, latitude, longitude}].
+ * Exported so tests can pin the mapping without network access. Mirrors
+ * location-picker/worker.js so both backends behave identically.
+ */
+export function mapNominatimResults(payload) {
+  if (!Array.isArray(payload)) return [];
+  return payload.map((item) => ({
+    label: String(item.display_name || "unnamed"),
+    latitude: Number(item.lat),
+    longitude: Number(item.lon),
+  })).filter((item) => Number.isFinite(item.latitude) && Number.isFinite(item.longitude));
+}
+
+/**
  * Build the request handler plus fetch stats. Exported for tests; the CLI
  * entry below wires it to a real server with env credentials.
+ *
+ * options.fetchImpl overrides the global fetch used by /search so tests run
+ * without network access.
  */
 export function createHandler(options) {
   const token = String(options.token || "");
   const dataFile = options.dataFile;
+  const fetchImpl = options.fetchImpl || fetch;
 
   const stats = { fetchCount: 0, lastFetchAt: null };
 
@@ -210,6 +272,21 @@ export function createHandler(options) {
           sendJson(res, 400, { error: "invalid JSON body" });
         }
       });
+      return;
+    }
+    if (url.pathname === "/search" && req.method === "GET") {
+      const query = (url.searchParams.get("q") || "").trim();
+      if (!query) {
+        sendJson(res, 400, { error: "missing q" });
+        return;
+      }
+      // Nominatim's usage policy requires an identifying User-Agent.
+      const endpoint = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=" +
+        encodeURIComponent(query);
+      fetchImpl(endpoint, { headers: { "User-Agent": "MyRocketLocationPicker/1.0 (module config service)" } })
+        .then((upstream) => upstream.json())
+        .then((payload) => sendJson(res, 200, mapNominatimResults(payload)))
+        .catch((err) => sendJson(res, 502, { error: "geocoder unreachable: " + err.message }));
       return;
     }
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
