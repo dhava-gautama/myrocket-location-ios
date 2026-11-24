@@ -37,6 +37,7 @@ jobs:
           files: |
             dist/myrocket-location-ios.sgmodule
             dist/myrocket-location-ios-surge.sgmodule
+            dist/myrocket-location-ios-surge-easy.sgmodule
             dist/myrocket-location-ios.lnplugin
             dist/myrocket-location-ios.snippet
             dist/myrocket-location-ios.stoverride
