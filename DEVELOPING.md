@@ -8,10 +8,10 @@ iPhone — GitHub Actions renders the modules automatically.
 
 ```sh
 node tools/cli.mjs build all [lat] [lng] [hacc]   # render all module files into dist/
-node tools/cli.mjs test                           # engine unit tests (46)
+node tools/cli.mjs test                           # engine unit tests (59)
 node tools/cli.mjs demo                           # end-to-end fixture run
 node tools/cli.mjs dump <hexfile>                 # patch a captured hex dump
-node test/runtime.test.mjs                        # proxy-app sandbox tests (17)
+node test/runtime.test.mjs                        # proxy-app sandbox tests (22)
 node test/picker.test.mjs                         # Node picker handler tests (10)
 node test/worker.test.mjs                         # Cloudflare Worker tests (14)
 node tools/build-dist.mjs                         # dist/wloc.engine.js only
@@ -46,6 +46,21 @@ dist/                    generated modules + engine (committed; modules fetch it
 from the GitHub mobile app), and commits the result on the default branch.
 Pushing a `v*` tag runs the release workflow, attaching modules with pinned,
 immutable `script-path` URLs.
+
+## Preset mode ("easy" module)
+
+`modules/surge-easy.template` renders `dist/myrocket-location-ios-surge-easy.sgmodule`,
+which exposes `OPTIONS` instead of raw coordinates. Resolution lives in
+`core/wloc.mjs` (`readPresetSlot` / `resolvePresetTarget` / `jitterCoordinate`)
+and is applied once per pass in `collectConfig`, so `patchAndDone` still receives
+plain latitude/longitude.
+
+- `OPTIONS=1|A` → `latA`/`lngA`, `2|B` → `latB`/`lngB`, anything else →
+  `customLat`/`customLng` (falling back to `latitude`/`longitude`).
+- Drift defaults to 3–7 m (`noiseMin`/`noiseMax`; `noise=false` disables it) and
+  the result is clamped to valid WGS-84 bounds.
+- Preset mode clears `configUrl`, so a stale picker cache can never fight the switch.
+- No `OPTIONS` key → the previous behaviour, byte for byte.
 
 ## Remote config contract
 

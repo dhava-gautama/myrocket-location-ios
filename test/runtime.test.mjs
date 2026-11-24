@@ -242,5 +242,70 @@ const PICKER_URL = decodeURIComponent("https%3A%2F%2Fpicker.example%2Floc.json%3
   check("failed fetch falls back to stale cache", text.includes("e082d59912") && text.includes("a0d89470"), text.slice(0, 80));
 }
 
+/* 11. Preset module: OPTIONS picks the slot, and wins over latitude/longitude. */
+{
+  const result = runInSandbox({
+    __ENGINE_SOURCE__: engineSource,
+    $response: { bodyBytes: hexToBytes(fixtureHex) },
+    $argument: "mode=response&OPTIONS=2&latA=1.5&lngA=2.5&latB=48.8566&lngB=2.3522&latitude=1&longitude=2&noise=false",
+    console,
+  });
+  const text = Buffer.from(result.body).toString("hex");
+  check("preset module targets spot B", text.includes("e082d59912") && text.includes("a0d89470"), text.slice(0, 80));
+}
+
+/* 12. Preset drift still yields a patched body (different each pass). */
+{
+  const first = runInSandbox({
+    __ENGINE_SOURCE__: engineSource,
+    $response: { bodyBytes: hexToBytes(fixtureHex) },
+    $argument: "OPTIONS=1&latA=-6.111412&lngA=106.131867",
+    console,
+  });
+  const second = runInSandbox({
+    __ENGINE_SOURCE__: engineSource,
+    $response: { bodyBytes: hexToBytes(fixtureHex) },
+    $argument: "OPTIONS=1&latA=-6.111412&lngA=106.131867",
+    console,
+  });
+  check("preset drift patched", first && first.body && first.body.length > 100);
+  check(
+    "preset drift differs between passes",
+    Buffer.from(first.body).toString("hex") !== Buffer.from(second.body).toString("hex"),
+  );
+}
+
+/* 13. Preset mode ignores the picker: no fetch, no cached-target override. */
+{
+  let fetched = false;
+  const store = {
+    myrocket_remote_cfg: JSON.stringify({
+      url: PICKER_URL,
+      data: { latitude: 48.8566, longitude: 2.3522, horizontalAccuracy: 8 },
+      ts: Date.now(),
+    }),
+  };
+  const result = runInSandbox({
+    __ENGINE_SOURCE__: engineSource,
+    $response: { bodyBytes: hexToBytes(fixtureHex) },
+    $argument: "OPTIONS=1&latA=-6.111412&lngA=106.131867&noise=false&configUrl=" + encodeURIComponent(PICKER_URL),
+    $httpClient: {
+      get: () => {
+        fetched = true;
+      },
+    },
+    $persistentStore: {
+      read: (key) => store[key] || null,
+      write: (key, value) => {
+        store[key] = value;
+      },
+    },
+    console,
+  });
+  const text = Buffer.from(result.body).toString("hex");
+  check("preset mode does not fetch the picker", fetched === false);
+  check("preset mode ignores the cached picker target", !text.includes("e082d59912"), text.slice(0, 80));
+}
+
 console.log("\n" + passed + " passed, " + failed + " failed");
 if (failed > 0) process.exitCode = 1;

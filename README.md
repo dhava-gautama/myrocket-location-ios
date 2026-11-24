@@ -53,6 +53,7 @@ work the same way (file names in step 4 differ).
 | App | URL |
 |-----|-----|
 | Surge | `https://raw.githubusercontent.com/dhava-gautama/myrocket-location-ios/master/dist/myrocket-location-ios-surge.sgmodule` |
+| Surge (saved presets) | `https://raw.githubusercontent.com/dhava-gautama/myrocket-location-ios/master/dist/myrocket-location-ios-surge-easy.sgmodule` |
 | Loon | `https://raw.githubusercontent.com/dhava-gautama/myrocket-location-ios/master/dist/myrocket-location-ios.lnplugin` |
 | Quantumult X | `https://raw.githubusercontent.com/dhava-gautama/myrocket-location-ios/master/dist/myrocket-location-ios.snippet` |
 | Stash | `https://raw.githubusercontent.com/dhava-gautama/myrocket-location-ios/master/dist/myrocket-location-ios.stoverride` |
@@ -74,6 +75,14 @@ within seconds, no reinstall.
 **Manual way.** In Shadowrocket, tap the module → edit arguments → change
 `latitude=…&longitude=…` to your target (find coordinates in Apple Maps by
 long-pressing a spot, or Google "Tokyo Tower coordinates"). Save.
+
+**Preset switch — Surge only.** The `…-surge-easy.sgmodule` module keeps two
+spots plus a custom one in its parameter table. Open Surge → **Modules** → tap
+the module → fill `latA`/`lngA` and `latB`/`lngB` once (and `customLat`/
+`customLng` for spot 3), then just flip `OPTIONS` between `1`, `2`, and `3`.
+Each fix drifts 3–7 m so repeated locations are never byte-identical; set
+`noise` to `false` for an exact pin. Preset mode wins over the picker and any
+leftover `latitude`/`longitude` argument.
 
 ### Step 5 — Apply it
 

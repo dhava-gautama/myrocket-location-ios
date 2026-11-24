@@ -26,7 +26,17 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(ROOT, "dist");
 const MODULES = join(ROOT, "modules");
 
-const APPS = ["shadowrocket", "surge", "loon", "quantumultx", "stash"];
+const APPS = ["shadowrocket", "surge", "surge-easy", "loon", "quantumultx", "stash"];
+
+/** Output file for each render target (also the template name). */
+const TARGETS = {
+  shadowrocket: "myrocket-location-ios.sgmodule",
+  surge: "myrocket-location-ios-surge.sgmodule",
+  "surge-easy": "myrocket-location-ios-surge-easy.sgmodule",
+  loon: "myrocket-location-ios.lnplugin",
+  quantumultx: "myrocket-location-ios.snippet",
+  stash: "myrocket-location-ios.stoverride",
+};
 
 async function renderTemplate(app, config) {
   const template = await readFile(join(MODULES, app + ".template"), "utf8");
@@ -40,11 +50,7 @@ async function renderTemplate(app, config) {
     .replace(/\{\{LATITUDE\}\}/g, String(config.latitude))
     .replace(/\{\{LONGITUDE\}\}/g, String(config.longitude))
     .replace(/\{\{HACC\}\}/g, String(config.horizontalAccuracy));
-  const target = app === "quantumultx" ? "myrocket-location-ios.snippet"
-    : app === "stash" ? "myrocket-location-ios.stoverride"
-    : app === "surge" ? "myrocket-location-ios-surge.sgmodule"
-    : app === "loon" ? "myrocket-location-ios.lnplugin"
-    : "myrocket-location-ios.sgmodule";
+  const target = TARGETS[app];
   const path = join(DIST, target);
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, out);

@@ -5,6 +5,7 @@
 
 import {
   concatBytes,
+  DEFAULT_PRESET_NOISE,
   coordinateToScaledInt,
   decodeVarint,
   encodeVarint,
@@ -16,7 +17,9 @@ import {
   parseArgumentString,
   parseFields,
   patchWlocRoot,
+  readPresetSlot,
   resolveConfigUrl,
+  resolvePresetTarget,
   scaledIntToCoordinate,
   serializeArpcEnvelope,
   spoofWlocResponse,
@@ -245,6 +248,47 @@ function testConfigAndArgs() {
   check("resolveConfigUrl joins host+token", url === "https://picker.example/loc.json?token=tok", url);
 }
 
+function testPresetMode() {
+  check("preset off without OPTIONS", resolvePresetTarget({ latitude: "1", longitude: "2" }) === null);
+
+  const a = resolvePresetTarget({ OPTIONS: "1", latA: "10.5", lngA: "20.25", noise: "false" });
+  check("preset A exact", a && a.preset === "A" && a.latitude === 10.5 && a.longitude === 20.25 && a.noiseMeters === 0);
+
+  const b = resolvePresetTarget({ options: "b", latB: "48.8566", lngB: "2.3522", noise: "false" });
+  check("preset B via lowercase key/value", b && b.preset === "B" && b.latitude === 48.8566 && b.longitude === 2.3522);
+
+  const c = resolvePresetTarget({ OPTIONS: "3", customLat: "-6.2", customLng: "106.8", latitude: "99", longitude: "99", noise: "false" });
+  check("preset C prefers custom coords", c && c.preset === "C" && c.latitude === -6.2 && c.longitude === 106.8);
+
+  const fallback = resolvePresetTarget({ OPTIONS: "custom", latitude: "35.6764", longitude: "139.65", noise: "false" });
+  check("preset C falls back to latitude/longitude", fallback && fallback.latitude === 35.6764 && fallback.longitude === 139.65);
+
+  check("preset rejects out-of-range coords", resolvePresetTarget({ OPTIONS: "1", latA: "95", lngA: "0" }) === null);
+  check("preset rejects unparseable coords", resolvePresetTarget({ OPTIONS: "1", latA: "abc", lngA: "0" }) === null);
+  check("readPresetSlot maps unknown values to C", readPresetSlot({ OPTIONS: "banana" }) === "C");
+
+  const jittered = resolvePresetTarget({ OPTIONS: "1", latA: "-6.111412", lngA: "106.131867" }, () => 0.5);
+  check(
+    "preset drift stays within default 3-7 m",
+    jittered.noiseMeters >= DEFAULT_PRESET_NOISE.min && jittered.noiseMeters <= DEFAULT_PRESET_NOISE.max,
+    String(jittered.noiseMeters),
+  );
+  const dLatM = (jittered.latitude - jittered.baseLatitude) * 111320;
+  const dLngM =
+    (jittered.longitude - jittered.baseLongitude) * 111320 * Math.cos((jittered.baseLatitude * Math.PI) / 180);
+  const distance = Math.sqrt(dLatM * dLatM + dLngM * dLngM);
+  check("preset drift magnitude matches noiseMeters", Math.abs(distance - jittered.noiseMeters) < 0.01, distance + " vs " + jittered.noiseMeters);
+
+  const again = resolvePresetTarget({ OPTIONS: "1", latA: "-6.111412", lngA: "106.131867" }, () => 0.5);
+  check("preset drift is deterministic for a fixed random source", again.latitude === jittered.latitude && again.longitude === jittered.longitude);
+
+  const wide = resolvePresetTarget({ OPTIONS: "1", latA: "-6.111412", lngA: "106.131867", noiseMin: "0", noiseMax: "100" }, () => 0.999);
+  check("preset honours noiseMin/noiseMax", wide.noiseMeters > 99 && wide.noiseMeters < 100.1, String(wide.noiseMeters));
+
+  const exact = resolvePresetTarget({ OPTIONS: "1", latA: "-6.111412", lngA: "106.131867", noise: "false" });
+  check("noise=false keeps the exact target", exact.latitude === -6.111412 && exact.longitude === 106.131867 && exact.noiseMeters === 0);
+}
+
 function testMinimality() {
   // A wifi record with an extra field (field 4 = ssid) must keep it verbatim.
   const device = concatBytes([
@@ -290,6 +334,7 @@ export function runTests() {
   testExtractShapes();
   testSpoofEndToEnd();
   testConfigAndArgs();
+  testPresetMode();
   testMinimality();
   testPreservesNonLocationFields();
 

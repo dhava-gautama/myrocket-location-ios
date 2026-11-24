@@ -199,6 +199,20 @@ function collectConfig(argument) {
     applyRemoteData(args, cacheEntry.data);
   }
 
+  // Preset mode ("easy" module) owns the target outright: the OPTIONS switch
+  // must not lose to a stale picker cache or to leftover latitude/longitude
+  // arguments. Without an OPTIONS key this is a no-op.
+  var preset = resolvePresetTarget(args);
+  if (preset) {
+    args.latitude = preset.latitude;
+    args.longitude = preset.longitude;
+    args.preset = preset.preset;
+    args.presetNoiseMeters = preset.noiseMeters;
+    cacheUrl = "";
+    cacheEntry = null;
+    cacheFresh = true;
+  }
+
   return {
     args: args,
     cacheUrl: cacheUrl,
@@ -290,6 +304,13 @@ function handleResponse(request, response) {
   var collected = collectConfig(request && request.argument !== undefined ? request.argument : $argument);
   var args = collected.args;
   var config = collected.config;
+
+  if (config.debug && args.preset) {
+    log(
+      "preset " + args.preset + " -> " + config.latitude.toFixed(6) + "," +
+        config.longitude.toFixed(6) + " (" + Number(args.presetNoiseMeters || 0).toFixed(1) + " m drift)",
+    );
+  }
 
   if (!parseBoolean(args.enabled, true)) {
     log("disabled by argument; passing through");

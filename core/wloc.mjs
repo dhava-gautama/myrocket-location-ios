@@ -707,6 +707,134 @@ export function resolveConfigUrl(args) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Preset mode ("easy" switch)
+ *
+ * A module may offer one `OPTIONS` argument instead of raw coordinates:
+ * 1 / A -> preset A, 2 / B -> preset B, anything else (3, "custom") -> C.
+ * Each fix is optionally drifted by a few metres so repeated fixes are not
+ * byte-identical, which is what a device that never moves would look like.
+ * All of this is optional: without an OPTIONS key the engine behaves exactly
+ * as before and the latitude/longitude/picker paths are untouched.
+ *
+ * Clock skew, GPS noise and map matching all expect a target that wobbles a
+ * little; a perfectly constant coordinate is the anomaly, not the drift.
+ * ------------------------------------------------------------------ */
+
+/** Metres per degree of latitude (WGS-84 mean), matching the preset math. */
+var METERS_PER_DEGREE_LAT = 111320;
+
+/** Default random drift applied in preset mode, in metres. */
+export var DEFAULT_PRESET_NOISE = { min: 3, max: 7 };
+
+/** Argument spellings accepted for each preset slot. */
+var PRESET_SLOTS = {
+  A: { lat: ["latA", "latitudeA", "lat_a"], lng: ["lngA", "longitudeA", "lng_a"] },
+  B: { lat: ["latB", "latitudeB", "lat_b"], lng: ["lngB", "longitudeB", "lng_b"] },
+  C: { lat: ["customLat", "custom_lat"], lng: ["customLng", "custom_lng"] },
+};
+
+/** Read the first parseable number among `keys`, or null. */
+function readPresetNumber(args, keys) {
+  for (var i = 0; i < keys.length; i += 1) {
+    var raw = args[keys[i]];
+    if (raw === null || raw === undefined || raw === "") continue;
+    var value = Number(raw);
+    if (isFinite(value)) return value;
+  }
+  return null;
+}
+
+/** Map the OPTIONS argument onto a preset slot ("A"/"B"/"C"), or null. */
+export function readPresetSlot(args) {
+  args = args || {};
+  var raw = args.OPTIONS;
+  if (raw === undefined) raw = args.options;
+  if (raw === undefined) raw = args.option;
+  if (raw === undefined) raw = args.preset;
+  if (raw === undefined || raw === null) return null;
+
+  var value = String(raw).trim().toLowerCase();
+  if (!value) return null;
+  if (value === "1" || value === "a" || value === "locationa" || value === "location a" || value === "location-a") {
+    return "A";
+  }
+  if (value === "2" || value === "b" || value === "locationb" || value === "location b" || value === "location-b") {
+    return "B";
+  }
+  return "C";
+}
+
+/**
+ * Offset a coordinate by a random distance in `[minMeters, maxMeters]`.
+ * `random` is injectable so tests are deterministic; it defaults to Math.random.
+ * The latitude/longitude pair is clamped to valid WGS-84 bounds.
+ */
+export function jitterCoordinate(latitude, longitude, minMeters, maxMeters, random) {
+  var rand = typeof random === "function" ? random : Math.random;
+  var min = isFinite(minMeters) && minMeters > 0 ? minMeters : 0;
+  var max = isFinite(maxMeters) && maxMeters > min ? maxMeters : min;
+  var meters = min + rand() * (max - min);
+  var angle = rand() * Math.PI * 2;
+  var dLat = (meters * Math.cos(angle)) / METERS_PER_DEGREE_LAT;
+  var metersPerDegreeLng = METERS_PER_DEGREE_LAT * Math.cos((latitude * Math.PI) / 180);
+  var dLng = Math.abs(metersPerDegreeLng) < 1 ? 0 : (meters * Math.sin(angle)) / metersPerDegreeLng;
+
+  var lat = Math.max(-90, Math.min(90, latitude + dLat));
+  var lng = ((((longitude + dLng) + 540) % 360) + 360) % 360 - 180;
+  return { latitude: lat, longitude: lng, noiseMeters: meters };
+}
+
+/**
+ * Resolve the preset target for this pass, or null when preset mode is off.
+ *
+ * Returns `{preset, latitude, longitude, noiseMeters, baseLatitude,
+ * baseLongitude}`. `latitude`/`longitude` already include the drift, so
+ * callers can drop them straight into the config. Unparseable or out-of-range
+ * preset coordinates return null so a typo degrades to the normal path
+ * instead of killing the script.
+ */
+export function resolvePresetTarget(args, random) {
+  args = args || {};
+  var slot = readPresetSlot(args);
+  if (!slot) return null;
+
+  var spec = PRESET_SLOTS[slot];
+  var latitude = readPresetNumber(args, spec.lat);
+  var longitude = readPresetNumber(args, spec.lng);
+  // Preset C may fall back to plain latitude/longitude (picker-style args).
+  if (slot === "C") {
+    if (latitude === null) latitude = readPresetNumber(args, ["latitude"]);
+    if (longitude === null) longitude = readPresetNumber(args, ["longitude"]);
+  }
+  if (latitude === null || longitude === null) return null;
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+
+  var noise = parseBoolean(args.noise, parseBoolean(args.jitter, true));
+  var min = readPresetNumber(args, ["noiseMin", "noise_min", "jitterMin"]);
+  var max = readPresetNumber(args, ["noiseMax", "noise_max", "jitterMax"]);
+  if (min === null) min = DEFAULT_PRESET_NOISE.min;
+  if (max === null) max = DEFAULT_PRESET_NOISE.max;
+  if (min < 0) min = 0;
+  if (max < min) max = min;
+
+  var target = {
+    preset: slot,
+    latitude: latitude,
+    longitude: longitude,
+    baseLatitude: latitude,
+    baseLongitude: longitude,
+    noiseMeters: 0,
+  };
+  if (!noise || max === 0) return target;
+
+  var drift = jitterCoordinate(latitude, longitude, min, max, random);
+  target.latitude = drift.latitude;
+  target.longitude = drift.longitude;
+  target.noiseMeters = drift.noiseMeters;
+  return target;
+}
+
+/* ------------------------------------------------------------------ *
  * Public API
  * ------------------------------------------------------------------ */
 
